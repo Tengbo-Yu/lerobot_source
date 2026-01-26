@@ -1,9 +1,19 @@
+# CUDA_VISIBLE_DEVICES=7 python src/lerobot/scripts/lerobot_train.py \
+#   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptGrabMedium_100/mikasa_dataset_1.0.0_lerobot \
+#   --dataset.repo_id=JackYuuuu/InterceptGrabMedium_100 \
+#   --policy.repo_id=JackYuuuu/act_policy_v0 \
+#   --policy.type=act \
+#   --output_dir=outputs/train/Act_InterceptGrabMedium_100\
+#   --job_name=Act_InterceptGrabMedium_100 \
+#   --policy.device=cuda \
+#   --wandb.enable=true
+
 CUDA_VISIBLE_DEVICES=7 python src/lerobot/scripts/lerobot_train.py \
   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptGrabMedium_100/mikasa_dataset_1.0.0_lerobot \
   --dataset.repo_id=JackYuuuu/InterceptGrabMedium_100 \
-  --policy.repo_id=JackYuuuu/act_policy_v0 \
-  --policy.type=act \
-  --output_dir=outputs/train/Act_InterceptGrabMedium_100\
-  --job_name=Act_InterceptGrabMedium_100 \
+  --policy.repo_id=JackYuuuu/DP_InterceptGrabMedium_100 \
+  --policy.type=diffusion \
+  --output_dir=outputs/train/DP_InterceptGrabMedium_100\
+  --job_name=DP_InterceptGrabMedium_100 \
   --policy.device=cuda \
   --wandb.enable=true
