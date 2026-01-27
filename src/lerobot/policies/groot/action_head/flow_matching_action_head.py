@@ -205,7 +205,14 @@ class FlowmatchingActionHead(nn.Module):
             self.position_embedding = nn.Embedding(config.max_seq_len, self.input_embedding_dim)
             nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
 
-        self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
+        # Handle meta tensor case when model is initialized on meta device (e.g., during from_pretrained)
+        alpha = config.noise_beta_alpha
+        beta_param = config.noise_beta_beta
+        if isinstance(alpha, torch.Tensor) and alpha.is_meta:
+            alpha = torch.tensor(1.5, dtype=torch.float32)
+        if isinstance(beta_param, torch.Tensor) and beta_param.is_meta:
+            beta_param = torch.tensor(1.0, dtype=torch.float32)
+        self.beta_dist = Beta(alpha, beta_param)
         self.num_timestep_buckets = config.num_timestep_buckets
         self.config = config
         self.set_trainable_parameters(config.tune_projector, config.tune_diffusion_model)
