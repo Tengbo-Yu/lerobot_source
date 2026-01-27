@@ -8,10 +8,10 @@
 #   --policy.device=cuda \
 #   --wandb.enable=true
 
-CUDA_VISIBLE_DEVICES=6 python src/lerobot/scripts/lerobot_train.py \
+CUDA_VISIBLE_DEVICES=7 python src/lerobot/scripts/lerobot_train.py \
   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptGrabMedium_100/mikasa_dataset_1.0.0_lerobot \
   --dataset.repo_id=JackYuuuu/InterceptGrabMedium_100 \
-  --policy.repo_id=JackYuuuu/DP_InterceptGrabMedium_100 \
+  --policy.repo_id=JackYuuuu/Groot_InterceptGrabMedium_100 \
   --policy.type=groot \
   --output_dir=outputs/train/Groot_InterceptGrabMedium_100\
   --job_name=Groot_InterceptGrabMedium_100 \
