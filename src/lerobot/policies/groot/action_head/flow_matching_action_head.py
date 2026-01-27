@@ -98,6 +98,7 @@ class MultiEmbodimentActionEncoder(nn.Module):
         # 2) Standard action MLP step for shape => (B, T, w)
         a_emb = self.W1(actions, cat_ids)
 
+
         # 3) Get the sinusoidal encoding (B, T, w)
         tau_emb = self.pos_encoding(timesteps).to(dtype=a_emb.dtype)
 
