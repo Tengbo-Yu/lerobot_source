@@ -209,6 +209,8 @@ class DiffusionConfig(PreTrainedConfig):
 
         if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
+                print(f"[DEBUG] Image key: {key}, shape: {image_ft.shape}")
+                print(f"[DEBUG] crop_shape: {self.crop_shape}, comparing with shape[1]={image_ft.shape[1]}, shape[2]={image_ft.shape[2]}")
                 if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
                     raise ValueError(
                         f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
