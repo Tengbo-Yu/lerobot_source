@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-评估在 lerobot 中训练的模型在 Mikasa 环境中的表现
+Evaluate lerobot-trained models in Mikasa environment
 
-使用示例:
+Usage Example:
 python eval_lerobot_on_mikasa.py \
     --policy.path=outputs/train/groot_n1/checkpoints/pretrained_model \
     --env.id=RememberColor3-v0 \
@@ -22,7 +22,7 @@ import torch
 import gymnasium as gym
 from tqdm import trange
 
-# 添加 MIKASA 和 lerobot 的路径
+# Add MIKASA and lerobot paths
 sys.path.append("/media/raid/workspace/tengbo/lerobot/third_party/MIKASA-Robo/baselines/openvla")
 sys.path.append("/media/raid/workspace/tengbo/lerobot/src")
 
@@ -32,15 +32,15 @@ from lerobot.processor import PolicyProcessorPipeline
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.utils.utils import get_safe_torch_device, set_seed
+from lerobot.utils.utils import get_safe_torch_device
+from lerobot.utils.random_utils import set_seed
 from lerobot.envs.utils import preprocess_observation
-
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mikasa_utils import get_mikasa_eval_env
-
 
 @dataclass
 class MikasaEvalConfig:
-    """Mikasa 环境配置"""
+    """Mikasa Environment Configuration"""
     env_id: str = "RememberColor3-v0"
     num_eval_steps: int = 60
     num_eval_episodes: int = 100
@@ -49,17 +49,20 @@ class MikasaEvalConfig:
     info_on_video: bool = False
     camera_width: int = 128
     camera_height: int = 128
-    control_mode: str = "pd_ee_delta_pose"
+    control_mode: str = "pd_joint_delta_pos"
     render_mode: str = "all"
     
-    # Lerobot 兼容配置
+    # LeRobot Compatible Configuration
     include_rgb: bool = True
     include_joints: bool = False
     include_state: bool = True
+    include_oracle: bool = False
+
+    project_name: str = "lerobot"
 
 
 class MikasaEnvWrapper:
-    """将 Mikasa 环境包装为兼容 lerobot 格式的环境"""
+    """Wrap Mikasa environment to be compatible with lerobot format"""
     
     def __init__(self, env, config: MikasaEvalConfig):
         self.env = env
@@ -68,6 +71,9 @@ class MikasaEnvWrapper:
         
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
+        # print("obs: ", obs.keys())
+        # print("info: ", info.keys())
+        # print("state: ", obs['state'])
         return self._convert_observation(obs), info
     
     def step(self, action):
@@ -75,35 +81,53 @@ class MikasaEnvWrapper:
         return self._convert_observation(obs), reward, terminated, truncated, info
     
     def _convert_observation(self, obs: Dict) -> Dict[str, Any]:
-        """将 Mikasa 观察格式转换为 lerobot 格式"""
-        # Mikasa 原始观察格式:
-        # - image_primary: (1, H, W, C) uint8
-        # - image_wrist: (1, H, W, C) uint8
+        """Convert Mikasa observation format to lerobot format"""
+        # Mikasa raw observation format (from CameraWrapper):
+        # - image_primary: (B, H, W, C) uint8 or (H, W, C) uint8
+        # - image_wrist: (B, H, W, C) uint8 or (H, W, C) uint8
         
-        # 转换为 lerobot 期望格式:
-        # - observation.images.{camera_name}: (C, H, W) uint8
-        # - observation.state: (D,) float32
+        # Convert to lerobot expected format (key: need explicit batch dimension):
+        # - observation.images.{camera_name}: (B, C, H, W) uint8
+        # - observation.state: (B, D) float32
         
         lerobot_obs = {}
         
-        # 处理主视角图像: (1, H, W, C) -> (C, H, W)
+        # Process primary image: keep batch dimension
         if "image_primary" in obs:
-            img_primary = obs["image_primary"]  # (1, H, W, C)
-            # 去掉批次维度，转换为 (H, W, C) -> (C, H, W)
-            img = img_primary[0].permute(2, 0, 1)  # (C, H, W)
-            lerobot_obs["observation.images.primary"] = img
+            img_primary = obs["image_primary"]  # (1, H, W, C) or (H, W, C)
+            if img_primary.ndim == 4:
+                # (B, H, W, C) -> (B, C, H, W)
+                img = img_primary.permute(0, 3, 1, 2)
+            elif img_primary.ndim == 3:
+                # (H, W, C) -> (1, C, H, W) - add batch=1 dimension
+                img = img_primary.permute(2, 0, 1).unsqueeze(0)
+            else:
+                raise ValueError(f"Unexpected image shape: {img_primary.shape}")
+            lerobot_obs["observation.images.image"] = img
             
-        # 处理手腕图像
+        # Process wrist image
         if "image_wrist" in obs:
-            img_wrist = obs["image_wrist"]  # (1, H, W, C)
-            img = img_wrist[0].permute(2, 0, 1)  # (C, H, W)
-            lerobot_obs["observation.images.wrist"] = img
+            img_wrist = obs["image_wrist"]  # (1, H, W, C) or (H, W, C)
+            if img_wrist.ndim == 4:
+                img = img_wrist.permute(0, 3, 1, 2)
+            elif img_wrist.ndim == 3:
+                img = img_wrist.permute(2, 0, 1).unsqueeze(0)
+            else:
+                raise ValueError(f"Unexpected image shape: {img_wrist.shape}")
+            lerobot_obs["observation.images.wrist_image"] = img
         
-        # 处理状态信息 (如果环境有提供)
+        # Process state: ensure batch dimension
         if "state" in obs:
-            # Mikasa 状态格式通常是末端执行器位置 + 夹爪状态
-            state = obs["state"]  # 假设是 (D,)
+            state = obs["state"]  # (1, D) or (D,)
+            if state.ndim == 2:
+                state = state[:, :8]  # (B, 8)
+            elif state.ndim == 1:
+                state = state[:8].unsqueeze(0)  # (1, 8) - add batch dimension
+            else:
+                raise ValueError(f"Unexpected state shape: {state.shape}")
             lerobot_obs["observation.state"] = state
+            
+        return lerobot_obs
             
         return lerobot_obs
     
@@ -116,7 +140,7 @@ class MikasaEnvWrapper:
         self._num_envs = value
         
     def call(self, method, *args, **kwargs):
-        """支持 VectorEnv 的 call 方法"""
+        """Support VectorEnv call method"""
         return getattr(self.env, method)(*args, **kwargs)
     
     def render(self, mode="rgb_array"):
@@ -131,8 +155,8 @@ class MikasaEnvWrapper:
 
 
 def make_mikasa_env(cfg: MikasaEvalConfig):
-    """创建 Mikasa 环境"""
-    # 使用 lerobot 的配置结构，但需要设置 MIKASA 特定的参数
+    """Create Mikasa environment"""
+    # Use lerobot config structure, but set MIKASA-specific parameters
     class Args:
         def __init__(self, cfg: MikasaEvalConfig):
             self.env_id = cfg.env_id
@@ -148,6 +172,8 @@ def make_mikasa_env(cfg: MikasaEvalConfig):
             self.noop_steps = 1
             self.shader = "default"
             self.sim_backend = "gpu"
+            self.include_oracle = cfg.include_oracle
+            self.project_name = cfg.project_name
             
     args = Args(cfg)
     env = get_mikasa_eval_env(args)
@@ -156,32 +182,36 @@ def make_mikasa_env(cfg: MikasaEvalConfig):
 
 def make_mikasa_policy_preprocessor(policy: PreTrainedConfig, pretrained_path: str):
     """
-    为 Mikasa 环境创建自定义的预处理器
-    处理从 Mikasa 观察格式到模型输入格式的转换
+    Create custom preprocessor for Mikasa environment
+    Handle conversion from Mikasa observation format to model input format
     """
     
     class MikasaPreprocessor(PolicyProcessorPipeline):
-        """自定义预处理器：将 Mikasa 观察转换为模型输入"""
+        """Custom preprocessor: convert Mikasa observation to model input"""
         
         def __init__(self):
             super().__init__(steps=[], name="mikasa_preprocessor")
             
         def __call__(self, obs: Dict[str, Any]) -> Dict[str, Any]:
-            # 确保图像格式正确
             result = {}
             
-            # 重命名图像键
-            if "observation.images.primary" in obs:
-                result["observation.images.main_camera"] = obs["observation.images.primary"]
-            if "observation.images.wrist" in obs:
-                result["observation.images.hand_camera"] = obs["observation.images.wrist"]
+            # Process primary image
+            if "observation.images.image" in obs:
+                img = obs["observation.images.image"]
+                if isinstance(img, torch.Tensor) and img.dtype == torch.uint8:
+                    img = img.float() / 255.0
+                result["observation.images.image"] = img
                 
-            # 保留状态
+            # Process wrist image
+            if "observation.images.wrist_image" in obs:
+                img = obs["observation.images.wrist_image"]
+                if isinstance(img, torch.Tensor) and img.dtype == torch.uint8:
+                    img = img.float() / 255.0
+                result["observation.images.wrist_image"] = img
+            
+            # Keep state
             if "observation.state" in obs:
                 result["observation.state"] = obs["observation.state"]
-                
-            # 添加任务描述 (需要根据具体任务设置)
-            # result["task"] = "Remember the color of the cube and then pick the matching one"
                 
             return result
     
@@ -190,96 +220,110 @@ def make_mikasa_policy_preprocessor(policy: PreTrainedConfig, pretrained_path: s
 
 def evaluate_lerobot_on_mikasa(
     policy_path: str,
+    ds_meta_path: str,
     env_id: str = "RememberColor3-v0",
     n_episodes: int = 100,
     n_steps: int = 60,
     seed: int = 0,
     batch_size: int = 1,
     device: str = "cuda:0",
+    project_name: str = "lerobot",
 ):
     """
-    在 Mikasa 环境中评估 lerobot 训练的模型
+    Evaluate lerobot-trained models in Mikasa environment
     
     Args:
-        policy_path: 模型路径 (包含 model.safetensors 和 config.json)
-        env_id: Mikasa 环境 ID
-        n_episodes: 评估 episodes 数量
-        n_steps: 每个 episode 的最大步数
-        seed: 随机种子
-        batch_size: 批大小 (Mikasa 当前仅支持 1)
-        device: 设备
+        policy_path: Model path (containing model.safetensors and config.json)
+        ds_meta_path: Dataset metadata path
+        env_id: Mikasa environment ID
+        n_episodes: Number of evaluation episodes
+        n_steps: Max steps per episode
+        seed: Random seed
+        batch_size: Batch size (Mikasa currently only supports 1)
+        device: Device
     """
     
-    # 1. 配置
+    # 1. Configuration
     config = MikasaEvalConfig(
         env_id=env_id,
         num_eval_steps=n_steps,
         num_eval_episodes=n_episodes,
         seed=seed,
+        project_name=project_name,
     )
     
-    # 2. 设置设备和种子
+    # 2. Setup device and seed
     device = get_safe_torch_device(device)
     set_seed(seed)
     torch.backends.cudnn.benchmark = True
     
-    # 3. 创建环境
-    print(f"创建 Mikasa 环境: {env_id}")
+    # 3. Create environment
+    print(f"Creating Mikasa environment: {env_id}")
     env = make_mikasa_env(config)
     
-    # 4. 加载模型
-    print(f"加载模型: {policy_path}")
+    # 4. Load dataset metadata
+    print(f"Loading dataset metadata: {ds_meta_path}")
+    ds_meta = LeRobotDatasetMetadata(repo_id="local", root=ds_meta_path)
+    
+    # 5. Load model
+    print(f"Loading model: {policy_path}")
     policy = make_policy(
         cfg=PreTrainedConfig.from_pretrained(policy_path),
-        env_cfg=None,
+        ds_meta=ds_meta,
         rename_map={},
     )
     policy.to(device)
     policy.eval()
     
-    # 5. 创建预处理器 (处理观察格式转换)
+    # 5. Create preprocessor (handle observation format conversion)
     preprocessor = make_mikasa_policy_preprocessor(
         policy.config, 
         policy_path
     )[0]
     
-    # 6. 评估循环
+    # 6. Evaluation loop
     eval_metrics = defaultdict(list)
     
-    for ep_idx in trange(n_episodes, desc="评估 episodes"):
-        # 重置环境
-        obs, info = env.reset(seed=[seed + ep_idx])
-        
-        # 重置策略
+    for ep_idx in trange(n_episodes, desc="Evaluating episodes"):
+        # Reset environment
+        obs, info = env.reset(seed=[seed + ep_idx], options={})
+        print("obs keys: ", list(obs.keys()))
+        for k, v in obs.items():
+            if isinstance(v, torch.Tensor):
+                print(f"  {k}: shape={v.shape}, dtype={v.dtype}")
+            else:
+                print(f"  {k}: type={type(v)}")
+        print("info keys: ", list(info.keys()))
+        # Reset policy
         policy.reset()
         
         for step_idx in range(n_steps):
-            # 1. 预处理观察
-            obs = preprocess_observation(obs)
+            # 1. Preprocess observation
+            # obs = preprocess_observation(obs)
             obs = preprocessor(obs)
             
-            # 2. 移动到设备
+            # 2. Move to device
             for k, v in obs.items():
                 if isinstance(v, torch.Tensor):
                     obs[k] = v.to(device)
                     
-            # 3. 模型推理
+            # 3. Model inference
             with torch.inference_mode():
                 action = policy.select_action(obs)
                 
-            # 4. 后处理动作
+            # 4. Post-process action
             action_np = action.to("cpu").numpy()
             if action_np.ndim == 2:
-                action_np = action_np[0]  # 去掉批次维度
+                action_np = action_np[0]  # remove batch dimension
                 
-            # 5. 执行动作
+            # 5. Execute action
             obs, reward, done, trunc, info = env.step(action_np)
             
-            # 6. 检查是否结束
+            # 6. Check termination
             if done or trunc:
                 break
         
-        # 记录指标
+        # Record metrics
         if "final_info" in info:
             final_info = info["final_info"]
             if isinstance(final_info, dict) and "is_success" in final_info:
@@ -287,14 +331,14 @@ def evaluate_lerobot_on_mikasa(
                 eval_metrics["success"].append(success)
                 print(f"Episode {ep_idx}: success={success}")
     
-    # 7. 计算并打印结果
+    # 7. Calculate and print results
     if eval_metrics["success"]:
         success_rate = np.mean(eval_metrics["success"]) * 100
-        print(f"\n===== 评估结果 =====")
-        print(f"环境: {env_id}")
-        print(f"总 episodes: {n_episodes}")
-        print(f"成功次数: {sum(eval_metrics['success'])}")
-        print(f"成功率: {success_rate:.2f}%")
+        print(f"\n===== Evaluation Results =====")
+        print(f"Environment: {env_id}")
+        print(f"Total episodes: {n_episodes}")
+        print(f"Success count: {sum(eval_metrics['success'])}")
+        print(f"Success rate: {success_rate:.2f}%")
     
     env.close()
     
@@ -304,25 +348,28 @@ def evaluate_lerobot_on_mikasa(
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="在 Mikasa 环境中评估 lerobot 模型")
-    parser.add_argument("--policy.path", type=str, required=True, help="模型路径")
-    parser.add_argument("--env.id", type=str, default="RememberColor3-v0", help="环境 ID")
-    parser.add_argument("--eval.n_episodes", type=int, default=100, help="评估 episodes 数量")
-    parser.add_argument("--eval.n_steps", type=int, default=60, help="每个 episode 最大步数")
-    parser.add_argument("--eval.seed", type=int, default=0, help="随机种子")
-    parser.add_argument("--eval.batch_size", type=int, default=1, help="批大小")
-    parser.add_argument("--policy.device", type=str, default="cuda:0", help="设备")
-    
+    parser = argparse.ArgumentParser(description="Evaluate lerobot models in Mikasa environment")
+    parser.add_argument("--policy.path", type=str, required=True, help="Model path")
+    parser.add_argument("--policy.ds_meta_path", type=str, required=True, help="Dataset metadata path")
+    parser.add_argument("--env.id", type=str, default="RememberColor3-v0", help="Environment ID")
+    parser.add_argument("--eval.n_episodes", type=int, default=100, help="Number of evaluation episodes")
+    parser.add_argument("--eval.n_steps", type=int, default=60, help="Max steps per episode")
+    parser.add_argument("--eval.seed", type=int, default=0, help="Random seed")
+    parser.add_argument("--eval.batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--policy.device", type=str, default="cuda:0", help="Device")
+    parser.add_argument("--project.name", type=str, default="lerobot", help="Project name")
     args = parser.parse_args()
     
     evaluate_lerobot_on_mikasa(
         policy_path=getattr(args, "policy.path"),
+        ds_meta_path=getattr(args, "policy.ds_meta_path"),
         env_id=getattr(args, "env.id"),
         n_episodes=getattr(args, "eval.n_episodes"),
         n_steps=getattr(args, "eval.n_steps"),
         seed=getattr(args, "eval.seed"),
         batch_size=getattr(args, "eval.batch_size"),
         device=getattr(args, "policy.device"),
+        project_name=getattr(args, "project.name"),
     )
 
 

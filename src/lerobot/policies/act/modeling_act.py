@@ -465,23 +465,37 @@ class ACT(nn.Module):
         if self.config.env_state_feature:
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
+        # DEBUG: Print shapes
+        print(f"[DEBUG] latent_sample shape: {latent_sample.shape}")
+        print(f"[DEBUG] Number of tokens before images: {len(encoder_in_tokens)}")
+        for i, tok in enumerate(encoder_in_tokens):
+            print(f"[DEBUG] encoder_in_tokens[{i}] shape: {tok.shape}")
+
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
+            for img_idx, img in enumerate(batch[OBS_IMAGES]):
+                print(f"[DEBUG] Image {img_idx} shape: {img.shape}")
                 cam_features = self.backbone(img)["feature_map"]
+                print(f"[DEBUG] cam_features after backbone shape: {cam_features.shape}")
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
+                print(f"[DEBUG] cam_features after input_proj shape: {cam_features.shape}")
 
                 # Rearrange features to (sequence, batch, dim).
                 cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
                 cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                print(f"[DEBUG] cam_features after rearrange shape: {cam_features.shape}")
 
                 # Extend immediately instead of accumulating and concatenating
                 # Convert to list to extend properly
                 encoder_in_tokens.extend(list(cam_features))
                 encoder_in_pos_embed.extend(list(cam_pos_embed))
+
+        print(f"[DEBUG] Total tokens before stack: {len(encoder_in_tokens)}")
+        for i, tok in enumerate(encoder_in_tokens):
+            print(f"[DEBUG] encoder_in_tokens[{i}] final shape: {tok.shape}")
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
