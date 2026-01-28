@@ -329,7 +329,7 @@ def get_mikasa_eval_env(args):
         env = wrapper_class(env, **wrapper_kwargs)
 
     if args.save_video:
-        eval_output_dir = f"outputs/eval/{args.project_name}/{args.env_id}/{TIME}/videos"
+        eval_output_dir = f"outputs/eval/{args.project_name}/{args.model_id}/{args.TIME_STAMP}/videos"
 
         print(f"Saving eval videos to {eval_output_dir}")
         env = RecordEpisode(

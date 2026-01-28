@@ -16,7 +16,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from collections import defaultdict
-
+import time
 import numpy as np
 import torch
 import gymnasium as gym
@@ -37,7 +37,7 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.envs.utils import preprocess_observation
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mikasa_utils import get_mikasa_eval_env
-
+from robot_utils import normalize_gripper_action, invert_gripper_action
 @dataclass
 class MikasaEvalConfig:
     """Mikasa Environment Configuration"""
@@ -59,7 +59,8 @@ class MikasaEvalConfig:
     include_oracle: bool = False
 
     project_name: str = "lerobot"
-
+    model_id: str = ""
+    TIME_STAMP: str = ""
 
 class MikasaEnvWrapper:
     """Wrap Mikasa environment to be compatible with lerobot format"""
@@ -174,7 +175,9 @@ def make_mikasa_env(cfg: MikasaEvalConfig):
             self.sim_backend = "gpu"
             self.include_oracle = cfg.include_oracle
             self.project_name = cfg.project_name
-            
+            self.model_id = cfg.model_id
+            self.TIME_STAMP = cfg.TIME_STAMP
+
     args = Args(cfg)
     env = get_mikasa_eval_env(args)
     return MikasaEnvWrapper(env, cfg)
@@ -228,6 +231,7 @@ def evaluate_lerobot_on_mikasa(
     batch_size: int = 1,
     device: str = "cuda:0",
     project_name: str = "lerobot",
+    model_id: str = "",
 ):
     """
     Evaluate lerobot-trained models in Mikasa environment
@@ -242,7 +246,7 @@ def evaluate_lerobot_on_mikasa(
         batch_size: Batch size (Mikasa currently only supports 1)
         device: Device
     """
-    
+    TIME_STAMP = time.strftime("%Y%m%d_%H%M%S")
     # 1. Configuration
     config = MikasaEvalConfig(
         env_id=env_id,
@@ -250,6 +254,8 @@ def evaluate_lerobot_on_mikasa(
         num_eval_episodes=n_episodes,
         seed=seed,
         project_name=project_name,
+        model_id=model_id,
+        TIME_STAMP=TIME_STAMP,
     )
     
     # 2. Setup device and seed
@@ -287,13 +293,13 @@ def evaluate_lerobot_on_mikasa(
     for ep_idx in trange(n_episodes, desc="Evaluating episodes"):
         # Reset environment
         obs, info = env.reset(seed=[seed + ep_idx], options={})
-        print("obs keys: ", list(obs.keys()))
-        for k, v in obs.items():
-            if isinstance(v, torch.Tensor):
-                print(f"  {k}: shape={v.shape}, dtype={v.dtype}")
-            else:
-                print(f"  {k}: type={type(v)}")
-        print("info keys: ", list(info.keys()))
+        # print("obs keys: ", list(obs.keys()))
+        # for k, v in obs.items():
+        #     if isinstance(v, torch.Tensor):
+        #         print(f"  {k}: shape={v.shape}, dtype={v.dtype}")
+        #     else:
+        #         print(f"  {k}: type={type(v)}")
+        # print("info keys: ", list(info.keys()))
         # Reset policy
         policy.reset()
         
@@ -315,7 +321,9 @@ def evaluate_lerobot_on_mikasa(
             action_np = action.to("cpu").numpy()
             if action_np.ndim == 2:
                 action_np = action_np[0]  # remove batch dimension
-                
+            action_np = normalize_gripper_action(action_np)
+            action_np = invert_gripper_action(action_np)
+
             # 5. Execute action
             obs, reward, done, trunc, info = env.step(action_np)
             
@@ -339,6 +347,7 @@ def evaluate_lerobot_on_mikasa(
         print(f"Total episodes: {n_episodes}")
         print(f"Success count: {sum(eval_metrics['success'])}")
         print(f"Success rate: {success_rate:.2f}%")
+        success_rate.to_csv(f"outputs/eval/{project_name}/{model_id}/{TIME_STAMP}/success_rate.csv")
     
     env.close()
     
@@ -358,6 +367,7 @@ def main():
     parser.add_argument("--eval.batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--policy.device", type=str, default="cuda:0", help="Device")
     parser.add_argument("--project.name", type=str, default="lerobot", help="Project name")
+    parser.add_argument("--model.id", type=str, default="", help="Model ID")
     args = parser.parse_args()
     
     evaluate_lerobot_on_mikasa(
@@ -370,6 +380,7 @@ def main():
         batch_size=getattr(args, "eval.batch_size"),
         device=getattr(args, "policy.device"),
         project_name=getattr(args, "project.name"),
+        model_id=getattr(args, "model.id"),
     )
 
 
