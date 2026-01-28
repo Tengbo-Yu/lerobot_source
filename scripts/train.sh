@@ -17,3 +17,4 @@ CUDA_VISIBLE_DEVICES=3 python src/lerobot/scripts/lerobot_train.py \
   --job_name=Groot_InterceptGrabMedium-v0 \
   --policy.device=cuda \
   --wandb.enable=true
+  
