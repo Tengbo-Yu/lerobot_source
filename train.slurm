@@ -11,6 +11,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 
+conda activate lerobot
 python src/lerobot/scripts/lerobot_train.py \
   --dataset.root=/share/NSS/yutengbo/lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
