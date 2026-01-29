@@ -1,8 +1,8 @@
 #!/bin/bash
-GPU=3
+GPU=5
 ENV_NAME=InterceptMedium-v0
-MODEL_ID=Act_InterceptMedium-v0
-POLICY_PATH=/media/raid/workspace/tengbo/lerobot/outputs/train/${MODEL_ID}/checkpoints/020000/pretrained_model
+MODEL_ID=Groot_InterceptMedium-v0
+POLICY_PATH=/media/raid/workspace/tengbo/lerobot/outputs/train/${MODEL_ID}/checkpoints/100000/pretrained_model
 DS_META_PATH=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptGrabMedium_100/mikasa_dataset_1.0.0_lerobot
 POLICY_TYPE=act
 N_EPISODES=100
