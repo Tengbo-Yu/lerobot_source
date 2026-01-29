@@ -11,7 +11,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 
-conda init
+source /share/NSS/yutengbo/miniconda3/etc/profile.d/conda.sh
 
 conda activate lerobot
 
