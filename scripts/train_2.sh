@@ -43,10 +43,20 @@ done
 CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
-  --policy.repo_id=JackYuuuu/Groot_InterceptMedium_100 \
+  --policy.repo_id=JackYuuuu/SmolVLA_InterceptMedium_100 \
   --policy.type=groot \
-  --output_dir=outputs/train/Groot_InterceptMedium-v0\
+  --output_dir=outputs/train/SmolVLA_InterceptMedium-v0\
   --job_name=Groot_InterceptMedium-v0 \
   --policy.device=cuda \
   --wandb.enable=true
+
+# CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
+#   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
+#   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
+#   --policy.repo_id=JackYuuuu/Groot_InterceptMedium_100 \
+#   --policy.type=groot \
+#   --output_dir=outputs/train/Groot_InterceptMedium-v0\
+#   --job_name=Groot_InterceptMedium-v0 \
+#   --policy.device=cuda \
+#   --wandb.enable=true
   
