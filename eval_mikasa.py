@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 """
-Evaluate lerobot-trained models in Mikasa environment
+Evaluate lerobot-trained models (ACT, Groot, etc.) in Mikasa environment.
 
-Usage Example:
-python eval_lerobot_on_mikasa.py \
-    --policy.path=outputs/train/groot_n1/checkpoints/pretrained_model \
-    --env.id=RememberColor3-v0 \
-    --eval.n_episodes=100 \
-    --eval.batch_size=1
+Compatibility Guide:
+- ACT: Uses dataset_stats for Normalization/Unnormalization.
+- Groot: Uses AutoProcessor for VLM encoding and overrides for Normalization.
+- Post-processing: Automatically unnormalizes actions back to physical space.
 """
 
 import sys
@@ -26,18 +24,15 @@ from tqdm import trange
 sys.path.append("/media/raid/workspace/tengbo/lerobot/third_party/MIKASA-Robo/baselines/openvla")
 sys.path.append("/media/raid/workspace/tengbo/lerobot/src")
 
+# --- Import LeRobot Factory ---
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.configs import parser
-from lerobot.configs.eval import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.utils.utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
-from lerobot.envs.utils import preprocess_observation
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mikasa_utils import get_mikasa_eval_env
 from robot_utils import normalize_gripper_action, invert_gripper_action
+
 @dataclass
 class MikasaEvalConfig:
     """Mikasa Environment Configuration"""
@@ -63,7 +58,7 @@ class MikasaEvalConfig:
     TIME_STAMP: str = ""
 
 class MikasaEnvWrapper:
-    """Wrap Mikasa environment to be compatible with lerobot format"""
+    """Wrap Mikasa environment to be compatible with LeRobot Processor format"""
     
     def __init__(self, env, config: MikasaEvalConfig):
         self.env = env
@@ -72,9 +67,6 @@ class MikasaEnvWrapper:
         
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
-        # print("obs: ", obs.keys())
-        # print("info: ", info.keys())
-        # print("state: ", obs['state'])
         return self._convert_observation(obs), info
     
     def step(self, action):
@@ -82,66 +74,57 @@ class MikasaEnvWrapper:
         return self._convert_observation(obs), reward, terminated, truncated, info
     
     def _convert_observation(self, obs: Dict) -> Dict[str, Any]:
-        """Convert Mikasa observation format to lerobot format"""
-        # Mikasa raw observation format (from CameraWrapper):
-        # - image_primary: (B, H, W, C) uint8 or (H, W, C) uint8
-        # - image_wrist: (B, H, W, C) uint8 or (H, W, C) uint8
+        """
+        Convert Mikasa observation format to LeRobot standard format.
         
-        # Convert to lerobot expected format (key: need explicit batch dimension):
-        # - observation.images.{camera_name}: (B, C, H, W) uint8
-        # - observation.state: (B, D) float32
-        
+        Requirements for Official Processor:
+        1. Float Tensor in [0, 1] range.
+        2. Channel First (C, H, W).
+        3. NO BATCH DIMENSION (Processor will add it).
+        """
         lerobot_obs = {}
         
-        # Process primary image: keep batch dimension
+        # Helper function to process image
+        def process_image(img_data):
+            if isinstance(img_data, np.ndarray):
+                img_data = torch.from_numpy(img_data)
+            
+            # Handle Dimensions: (H, W, C) -> (C, H, W)
+            if img_data.ndim == 3 and img_data.shape[-1] == 3: 
+                img_data = img_data.permute(2, 0, 1)
+            # Handle potential Batch dim: (1, H, W, C) -> (C, H, W)
+            elif img_data.ndim == 4:
+                img_data = img_data.permute(0, 3, 1, 2).squeeze(0)
+            
+            # Normalize uint8 [0, 255] -> float [0, 1]
+            if img_data.dtype == torch.uint8:
+                img_data = img_data.float() / 255.0
+            return img_data
+
+        # Process primary image
         if "image_primary" in obs:
-            img_primary = obs["image_primary"]  # (1, H, W, C) or (H, W, C)
-            if img_primary.ndim == 4:
-                # (B, H, W, C) -> (B, C, H, W)
-                img = img_primary.permute(0, 3, 1, 2)
-            elif img_primary.ndim == 3:
-                # (H, W, C) -> (1, C, H, W) - add batch=1 dimension
-                img = img_primary.permute(2, 0, 1).unsqueeze(0)
-            else:
-                raise ValueError(f"Unexpected image shape: {img_primary.shape}")
-            lerobot_obs["observation.images.image"] = img
+            lerobot_obs["observation.images.image"] = process_image(obs["image_primary"])
             
         # Process wrist image
         if "image_wrist" in obs:
-            img_wrist = obs["image_wrist"]  # (1, H, W, C) or (H, W, C)
-            if img_wrist.ndim == 4:
-                img = img_wrist.permute(0, 3, 1, 2)
-            elif img_wrist.ndim == 3:
-                img = img_wrist.permute(2, 0, 1).unsqueeze(0)
-            else:
-                raise ValueError(f"Unexpected image shape: {img_wrist.shape}")
-            lerobot_obs["observation.images.wrist_image"] = img
+            lerobot_obs["observation.images.wrist_image"] = process_image(obs["image_wrist"])
         
-        # Process state: ensure batch dimension
+        # Process state: (D,) Float Tensor
         if "state" in obs:
-            state = obs["state"]  # (1, D) or (D,)
+            state = obs["state"]
+            if isinstance(state, np.ndarray):
+                state = torch.from_numpy(state)
+            
+            # Ensure 1D: (1, D) -> (D,)
             if state.ndim == 2:
-                state = state[:, :8]  # (B, 8)
-            elif state.ndim == 1:
-                state = state[:8].unsqueeze(0)  # (1, 8) - add batch dimension
-            else:
-                raise ValueError(f"Unexpected state shape: {state.shape}")
-            lerobot_obs["observation.state"] = state
+                state = state.squeeze(0)
             
-        return lerobot_obs
+            # Take first 8 dims (Joints + Gripper)
+            lerobot_obs["observation.state"] = state[:8].float()
             
         return lerobot_obs
     
-    @property
-    def num_envs(self):
-        return self._num_envs
-    
-    @num_envs.setter
-    def num_envs(self, value):
-        self._num_envs = value
-        
     def call(self, method, *args, **kwargs):
-        """Support VectorEnv call method"""
         return getattr(self.env, method)(*args, **kwargs)
     
     def render(self, mode="rgb_array"):
@@ -157,7 +140,6 @@ class MikasaEnvWrapper:
 
 def make_mikasa_env(cfg: MikasaEvalConfig):
     """Create Mikasa environment"""
-    # Use lerobot config structure, but set MIKASA-specific parameters
     class Args:
         def __init__(self, cfg: MikasaEvalConfig):
             self.env_id = cfg.env_id
@@ -183,44 +165,6 @@ def make_mikasa_env(cfg: MikasaEvalConfig):
     return MikasaEnvWrapper(env, cfg)
 
 
-def make_mikasa_policy_preprocessor(policy: PreTrainedConfig, pretrained_path: str):
-    """
-    Create custom preprocessor for Mikasa environment
-    Handle conversion from Mikasa observation format to model input format
-    """
-    
-    class MikasaPreprocessor(PolicyProcessorPipeline):
-        """Custom preprocessor: convert Mikasa observation to model input"""
-        
-        def __init__(self):
-            super().__init__(steps=[], name="mikasa_preprocessor")
-            
-        def __call__(self, obs: Dict[str, Any]) -> Dict[str, Any]:
-            result = {}
-            
-            # Process primary image
-            if "observation.images.image" in obs:
-                img = obs["observation.images.image"]
-                if isinstance(img, torch.Tensor) and img.dtype == torch.uint8:
-                    img = img.float() / 255.0
-                result["observation.images.image"] = img
-                
-            # Process wrist image
-            if "observation.images.wrist_image" in obs:
-                img = obs["observation.images.wrist_image"]
-                if isinstance(img, torch.Tensor) and img.dtype == torch.uint8:
-                    img = img.float() / 255.0
-                result["observation.images.wrist_image"] = img
-            
-            # Keep state
-            if "observation.state" in obs:
-                result["observation.state"] = obs["observation.state"]
-                
-            return result
-    
-    return MikasaPreprocessor(), None
-
-
 def evaluate_lerobot_on_mikasa(
     policy_path: str,
     ds_meta_path: str,
@@ -233,20 +177,9 @@ def evaluate_lerobot_on_mikasa(
     project_name: str = "lerobot",
     model_id: str = "",
 ):
-    """
-    Evaluate lerobot-trained models in Mikasa environment
-    
-    Args:
-        policy_path: Model path (containing model.safetensors and config.json)
-        ds_meta_path: Dataset metadata path
-        env_id: Mikasa environment ID
-        n_episodes: Number of evaluation episodes
-        n_steps: Max steps per episode
-        seed: Random seed
-        batch_size: Batch size (Mikasa currently only supports 1)
-        device: Device
-    """
+    """Evaluate lerobot-trained models in Mikasa environment"""
     TIME_STAMP = time.strftime("%Y%m%d_%H%M%S")
+    
     # 1. Configuration
     config = MikasaEvalConfig(
         env_id=env_id,
@@ -259,7 +192,7 @@ def evaluate_lerobot_on_mikasa(
     )
     
     # 2. Setup device and seed
-    device = get_safe_torch_device(device)
+    device_obj = get_safe_torch_device(device)
     set_seed(seed)
     torch.backends.cudnn.benchmark = True
     
@@ -267,96 +200,124 @@ def evaluate_lerobot_on_mikasa(
     print(f"Creating Mikasa environment: {env_id}")
     env = make_mikasa_env(config)
     
-    # 4. Load dataset metadata
+    # 4. Load dataset metadata (Crucial for Stats!)
     print(f"Loading dataset metadata: {ds_meta_path}")
     ds_meta = LeRobotDatasetMetadata(repo_id="local", root=ds_meta_path)
     
     # 5. Load model
     print(f"Loading model: {policy_path}")
+    policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
     policy = make_policy(
-        cfg=PreTrainedConfig.from_pretrained(policy_path),
+        cfg=policy_cfg,
         ds_meta=ds_meta,
         rename_map={},
     )
-    policy.to(device)
+    policy.to(device_obj)
     policy.eval()
     
-    # 5. Create preprocessor (handle observation format conversion)
-    preprocessor = make_mikasa_policy_preprocessor(
-        policy.config, 
-        policy_path
-    )[0]
+    # 6. Create Processor (Unified Interface)
+    print(f"Creating processor for policy type: {policy_cfg.type}")
     
-    # 6. Evaluation loop
+    processor_args = {
+        "policy_cfg": policy_cfg,
+        "pretrained_path": policy_path,
+        "dataset_stats": ds_meta.stats, # Groot & ACT need this
+    }
+
+    processor_args["preprocessor_overrides"] = {
+        "device_processor": {"device": device_obj.type},
+        "normalizer_processor": {
+            "stats": ds_meta.stats,
+            "features": {**policy_cfg.input_features, **policy_cfg.output_features},
+            "norm_map": policy_cfg.normalization_mapping,
+        },
+    }
+    processor_args["postprocessor_overrides"] = {
+        "unnormalizer_processor": {
+            "stats": ds_meta.stats,
+            "features": policy_cfg.output_features,
+            "norm_map": policy_cfg.normalization_mapping,
+        },
+    }
+
+    # Create BOTH processors
+    preprocessor, postprocessor = make_pre_post_processors(**processor_args)
+    
+    # 7. Evaluation loop
     eval_metrics = defaultdict(list)
-    
+    output_dir = Path(f"outputs/eval/{project_name}/{model_id}/{TIME_STAMP}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     for ep_idx in trange(n_episodes, desc="Evaluating episodes"):
-        # Reset environment
         obs, info = env.reset(seed=[seed + ep_idx], options={})
-        # print("obs keys: ", list(obs.keys()))
-        # for k, v in obs.items():
-        #     if isinstance(v, torch.Tensor):
-        #         print(f"  {k}: shape={v.shape}, dtype={v.dtype}")
-        #     else:
-        #         print(f"  {k}: type={type(v)}")
-        # print("info keys: ", list(info.keys()))
-        # Reset policy
         policy.reset()
         
+        success = False
+        
         for step_idx in range(n_steps):
-            # 1. Preprocess observation
-            # obs = preprocess_observation(obs)
+            # A. Preprocess
             obs = preprocessor(obs)
             
-            # 2. Move to device
-            for k, v in obs.items():
-                if isinstance(v, torch.Tensor):
-                    obs[k] = v.to(device)
-                    
-            # 3. Model inference
+            # B. Model Inference
             with torch.inference_mode():
                 action = policy.select_action(obs)
-                
-            # 4. Post-process action
+            
+            # C. Postprocess 
+            action = postprocessor(action)
+
+            # D. Convert to Numpy for Environment
             action_np = action.to("cpu").numpy()
+            
+            # Remove Batch dim (1, D) -> (D,)
             if action_np.ndim == 2:
-                action_np = action_np[0]  # remove batch dimension
+                action_np = action_np[0]
+                
+            # E. Robot Specific Utils (Optional, depending on your setup)
             action_np = normalize_gripper_action(action_np)
             action_np = invert_gripper_action(action_np)
 
-            # 5. Execute action
+            # F. Execute
             obs, reward, done, trunc, info = env.step(action_np)
             
-            # 6. Check termination
             if done or trunc:
-                break
-        
-        # Record metrics
-        if "final_info" in info:
-            final_info = info["final_info"]
-            if isinstance(final_info, dict) and "is_success" in final_info:
-                success = final_info["is_success"].item()
+                # Success Check
+                if "is_success" in info:
+                    success = info["is_success"]
+                elif "success" in info:
+                    success = info["success"]
+                elif "final_info" in info and "is_success" in info["final_info"]:
+                    success = info["final_info"]["is_success"]
+                
+                if hasattr(success, "item"): 
+                    success = success.item()
+                
                 eval_metrics["success"].append(success)
                 print(f"Episode {ep_idx}: success={success}")
+                break
+        
+        if not (done or trunc):
+             eval_metrics["success"].append(False)
+             print(f"Episode {ep_idx}: success=False (Timeout)")
     
-    # 7. Calculate and print results
+    # 8. Results
     if eval_metrics["success"]:
         success_rate = np.mean(eval_metrics["success"]) * 100
         print(f"\n===== Evaluation Results =====")
         print(f"Environment: {env_id}")
-        print(f"Total episodes: {n_episodes}")
-        print(f"Success count: {sum(eval_metrics['success'])}")
+        print(f"Policy Type: {policy_cfg.type}")
         print(f"Success rate: {success_rate:.2f}%")
-        success_rate.to_csv(f"outputs/eval/{project_name}/{model_id}/{TIME_STAMP}/success_rate.csv")
+        
+        with open(output_dir / "success_rate.txt", "w") as f:
+            f.write(f"Success Rate: {success_rate:.2f}%\n")
+            f.write(f"Total Episodes: {n_episodes}\n")
+    else:
+        print("\nWARNING: No success metrics were recorded.")
     
     env.close()
-    
     return eval_metrics
-
 
 def main():
     import argparse
-    
     parser = argparse.ArgumentParser(description="Evaluate lerobot models in Mikasa environment")
     parser.add_argument("--policy.path", type=str, required=True, help="Model path")
     parser.add_argument("--policy.ds_meta_path", type=str, required=True, help="Dataset metadata path")
@@ -382,7 +343,6 @@ def main():
         project_name=getattr(args, "project.name"),
         model_id=getattr(args, "model.id"),
     )
-
 
 if __name__ == "__main__":
     main()

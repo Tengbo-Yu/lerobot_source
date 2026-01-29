@@ -1,7 +1,7 @@
 #!/bin/bash
 
-GPU_ID=6
-THRESHOLD_MB=20000  # 20GB
+GPU_ID=7
+THRESHOLD_MB=32000  # 32GB
 
 echo "Checking GPU ${GPU_ID} free memory, will start training when free >= ${THRESHOLD_MB} MB..."
 
@@ -30,23 +30,23 @@ while true; do
   sleep 60
 done
 
+# CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
+#   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
+#   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
+#   --policy.repo_id=JackYuuuu/act_policy_v0 \
+#   --policy.type=act \
+#   --output_dir=outputs/train/Act_InterceptMedium-v0\
+#   --job_name=Act_InterceptMedium-v0 \
+#   --policy.device=cuda \
+#   --wandb.enable=true
+
 CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
-  --policy.repo_id=JackYuuuu/act_policy_v0 \
-  --policy.type=act \
-  --output_dir=outputs/train/Act_InterceptMedium-v0\
-  --job_name=Act_InterceptMedium-v0 \
+  --policy.repo_id=JackYuuuu/Groot_InterceptMedium_100 \
+  --policy.type=groot \
+  --output_dir=outputs/train/Groot_InterceptMedium-v0\
+  --job_name=Groot_InterceptMedium-v0 \
   --policy.device=cuda \
   --wandb.enable=true
-
-# CUDA_VISIBLE_DEVICES=3 python src/lerobot/scripts/lerobot_train.py \
-#   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptGrabMedium-v0/mikasa_dataset_1.0.0_lerobot \
-#   --dataset.repo_id=JackYuuuu/InterceptGrabMedium-v0 \
-#   --policy.repo_id=JackYuuuu/Groot_InterceptGrabMedium_100 \
-#   --policy.type=groot \
-#   --output_dir=outputs/train/Groot_InterceptGrabMedium-v0\
-#   --job_name=Groot_InterceptGrabMedium-v0 \
-#   --policy.device=cuda \
-#   --wandb.enable=true
   

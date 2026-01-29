@@ -177,3 +177,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+third_party/
+third_party/MIKASA-Robo
