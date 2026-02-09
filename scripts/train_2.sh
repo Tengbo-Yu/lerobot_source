@@ -1,6 +1,6 @@
 #!/bin/bash
 
-GPU_ID=7
+GPU_ID=1
 THRESHOLD_MB=32000  # 32GB
 
 echo "Checking GPU ${GPU_ID} free memory, will start training when free >= ${THRESHOLD_MB} MB..."
@@ -40,23 +40,29 @@ done
 #   --policy.device=cuda \
 #   --wandb.enable=true
 
-CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
-  --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
-  --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
-  --policy.repo_id=JackYuuuu/SmolVLA_InterceptMedium_100 \
-  --policy.type=smolvla \
-  --output_dir=outputs/train/SmolVLA_InterceptMedium-v0\
-  --job_name=SmolVLA_InterceptMedium-v0 \
-  --policy.device=cuda \
-  --wandb.enable=true
+# CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
+#   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
+#   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
+#   --policy.repo_id=JackYuuuu/SmolVLA_InterceptMedium_100 \
+#   --policy.type=smolvla \
+#   --output_dir=outputs/train/SmolVLA_InterceptMedium-v0\
+#   --job_name=SmolVLA_InterceptMedium-v0 \
+#   --policy.device=cuda \
+#   --wandb.enable=true
 
 # CUDA_VISIBLE_DEVICES=${GPU_ID} python src/lerobot/scripts/lerobot_train.py \
 #   --dataset.root=/media/raid/workspace/tengbo/any4lerobot/data/lerobot_data/InterceptMedium-v0/mikasa_dataset_1.0.0_lerobot \
 #   --dataset.repo_id=JackYuuuu/InterceptMedium-v0 \
-#   --policy.repo_id=JackYuuuu/Groot_InterceptMedium_100 \
-#   --policy.type=groot \
-#   --output_dir=outputs/train/Groot_InterceptMedium-v0\
-#   --job_name=Groot_InterceptMedium-v0 \
+#   --policy.repo_id=JackYuuuu/ACT_InterceptMedium_100 \
+#   --policy.type=act \
+#   --output_dir=outputs/train/ACT_InterceptMedium-v0-test\
+#   --job_name=ACT_InterceptMedium-v0 \
 #   --policy.device=cuda \
+#   --policy.input_features='{
+#         "observation.images.image": {"type": "VISUAL", "shape": [3, 128, 128]},
+#         "observation.images.wrist_image": {"type": "VISUAL", "shape": [3, 128, 128]}
+#     }' \
 #   --wandb.enable=true
-  
+
+
+

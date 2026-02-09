@@ -26,4 +26,4 @@ python src/lerobot/scripts/lerobot_train.py \
   --output_dir=outputs/train/pi05_InterceptMedium-v0\
   --job_name=pi05_InterceptMedium-v0 \
   --policy.device=cuda \
-  --wandb.enable=false
+  --wandb.enable=true

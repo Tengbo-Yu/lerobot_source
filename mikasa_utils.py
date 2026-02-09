@@ -74,7 +74,7 @@ from typing import Dict
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.utils import common
 from tqdm import tqdm
-
+import math
 import warnings
 warnings.filterwarnings('ignore', message='.*env\\.\\w+ to get variables from other wrappers is deprecated.*')
 
@@ -116,10 +116,26 @@ class CameraWrapper(gym.ObservationWrapper):
     def observation(self, obs: dict) -> dict:
         # print(obs.keys())
         # print(obs['sensor_data'].keys())
+        def to_numpy_1d(x):
+            """Convert tensor to 1D numpy array"""
+            if hasattr(x, 'cpu'):
+                x = x.cpu().numpy()
+            # Squeeze batch dimension: (1, D) -> (D,)
+            if x.ndim == 2:
+                x = x.squeeze(0)
+            return x
+            
+        tcp_pose = to_numpy_1d(obs['extra']['tcp_pose'])
+        qpos = to_numpy_1d(obs['agent']['qpos'])
+        qvel = to_numpy_1d(obs['agent']['qvel'])
+
         new_obs = {
             'image_primary': obs['sensor_data']['base_camera']['rgb'],
             'image_wrist': obs['sensor_data']['hand_camera']['rgb'],
-            'state': obs['agent']['qpos'],
+            'state': obs['agent']['qpos'][:, :8],
+            # 'state': np.concatenate([tcp_pose, qpos, qvel]), # TODO: check if tcp_vel is useful, and if we should also include qvel
+            # 'state': np.zeros_like(obs['agent']['qpos'].shape),
+            # 'state': obs['extra']['tcp_pose']
         }
         return new_obs
 
@@ -322,7 +338,7 @@ def get_mikasa_eval_env(args):
         **env_kwargs
     )
 
-    env = ManiSkillVectorEnv(env, 1, ignore_terminations=True, record_metrics=True)
+    # env = ManiSkillVectorEnv(env, ignore_terminations=True, record_metrics=True)
 
 
     for wrapper_class, wrapper_kwargs in wrappers_list:

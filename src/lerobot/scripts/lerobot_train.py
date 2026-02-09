@@ -278,7 +278,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         wandb_logger = WandBLogger(cfg)
     else:
         wandb_logger = None
-        if is_main_process:
+        if is_main_process: 
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
