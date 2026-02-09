@@ -178,7 +178,6 @@ outputs/
 *.xml
 *.part
 
-# third_party/
-# third_party/MIKASA-Robo
 
 pi05_base/
+# third_party/
